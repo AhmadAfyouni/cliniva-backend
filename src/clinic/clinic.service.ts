@@ -76,16 +76,20 @@ export class ClinicService {
     const normalizedComplexId = complexId?.toString?.() ?? complexId;
     const requestedId = new Types.ObjectId(normalizedComplexDepartmentId);
 
-    const junctionQuery: any = {
-      isActive: true,
-      $or: [{ _id: requestedId }],
-    };
-
+    const junctionQuery: any = { $or: [] };
     if (normalizedComplexId && Types.ObjectId.isValid(normalizedComplexId)) {
+      const normalizedComplexObjectId = new Types.ObjectId(normalizedComplexId);
+      // Accept either junction _id or raw department _id, but always scoped to the clinic's complex.
       junctionQuery.$or.push({
-        complexId: new Types.ObjectId(normalizedComplexId),
-        departmentId: requestedId,
+        _id: requestedId,
+        complexId: normalizedComplexObjectId,
       });
+      junctionQuery.$or.push({
+        departmentId: requestedId,
+        complexId: normalizedComplexObjectId,
+      });
+    } else {
+      junctionQuery.$or.push({ _id: requestedId });
     }
 
     const junctionRecord = await this.complexDepartmentModel

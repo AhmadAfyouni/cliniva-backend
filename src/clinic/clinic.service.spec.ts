@@ -193,9 +193,11 @@ describe('ClinicService', () => {
       } as any);
 
       expect(complexDepartmentModel.findOne).toHaveBeenCalledWith({
-        isActive: true,
         $or: [
-          { _id: new Types.ObjectId(departmentId) },
+          {
+            _id: new Types.ObjectId(departmentId),
+            complexId: new Types.ObjectId(complexId),
+          },
           {
             complexId: new Types.ObjectId(complexId),
             departmentId: new Types.ObjectId(departmentId),

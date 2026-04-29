@@ -3,12 +3,14 @@ import { ComplexService } from './complex.service';
 import { getModelToken, getConnectionToken } from '@nestjs/mongoose';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { SubscriptionService } from '../subscription/subscription.service';
+import { DepartmentService } from '../department/department.service';
 import { Types } from 'mongoose';
 
 describe('ComplexService - Create Complex Enhancement', () => {
   let service: ComplexService;
   let mockComplexModel: any;
   let mockSubscriptionService: any;
+  let mockDepartmentService: any;
   let mockConnection: any;
 
   beforeEach(async () => {
@@ -31,6 +33,10 @@ describe('ComplexService - Create Complex Enhancement', () => {
     mockSubscriptionService = {
       isSubscriptionActive: jest.fn(),
       getSubscriptionWithPlan: jest.fn(),
+    };
+
+    mockDepartmentService = {
+      getDepartmentsByComplex: jest.fn(),
     };
 
     // Mock Database Connection
@@ -57,6 +63,10 @@ describe('ComplexService - Create Complex Enhancement', () => {
         {
           provide: SubscriptionService,
           useValue: mockSubscriptionService,
+        },
+        {
+          provide: DepartmentService,
+          useValue: mockDepartmentService,
         },
       ],
     }).compile();
@@ -124,6 +134,10 @@ describe('ComplexService - Create Complex Enhancement', () => {
           {
             provide: SubscriptionService,
             useValue: mockSubscriptionService,
+          },
+          {
+            provide: DepartmentService,
+            useValue: mockDepartmentService,
           },
         ],
       }).compile();
@@ -280,6 +294,76 @@ describe('ComplexService - Create Complex Enhancement', () => {
       expect(mockComplex.email).toBe('test@example.com');
       expect(mockComplex.status).toBe('active');
       expect(mockComplex.deletedAt).toBeDefined();
+    });
+  });
+
+  describe('listComplexes', () => {
+    it('should keep owners at subscription scope while still including legacy null organization complexes', async () => {
+      const ownerUser = {
+        role: 'owner',
+        subscriptionId: new Types.ObjectId().toString(),
+        organizationId: new Types.ObjectId().toString(),
+      };
+
+      const findChain = {
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      };
+
+      mockComplexModel.find.mockReturnValue(findChain);
+      mockComplexModel.countDocuments.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(0),
+      });
+
+      await service.listComplexes({}, ownerUser);
+
+      expect(mockComplexModel.find).toHaveBeenCalledWith({
+        deletedAt: null,
+        subscriptionId: {
+          $in: [new Types.ObjectId(ownerUser.subscriptionId), ownerUser.subscriptionId],
+        },
+        $or: [
+          { organizationId: new Types.ObjectId(ownerUser.organizationId) },
+          { organizationId: null },
+          { organizationId: { $exists: false } },
+        ],
+      });
+    });
+  });
+
+  describe('getComplexesForDropdown', () => {
+    it('should include legacy null organization complexes for owners', async () => {
+      const ownerUser = {
+        role: 'owner',
+        subscriptionId: new Types.ObjectId().toString(),
+        organizationId: new Types.ObjectId().toString(),
+      };
+
+      mockComplexModel.find.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      });
+
+      await service.getComplexesForDropdown(ownerUser);
+
+      expect(mockComplexModel.find).toHaveBeenCalledWith({
+        deletedAt: null,
+        status: 'active',
+        subscriptionId: {
+          $in: [new Types.ObjectId(ownerUser.subscriptionId), ownerUser.subscriptionId],
+        },
+        $or: [
+          { organizationId: new Types.ObjectId(ownerUser.organizationId) },
+          { organizationId: null },
+          { organizationId: { $exists: false } },
+        ],
+      });
     });
   });
 });

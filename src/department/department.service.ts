@@ -416,16 +416,26 @@ export class DepartmentService {
    * // Returns: [{ _id: ObjectId, name: 'Clinic A', complexId: { _id: ObjectId, name: 'Complex 1' } }]
    */
   private async getLinkedClinics(
+    departmentId: string,
     complexDeptIds: Types.ObjectId[],
   ): Promise<LinkedClinicData[]> {
-    if (complexDeptIds.length === 0) {
+    const referenceIds = new Map<string, Types.ObjectId>();
+    if (Types.ObjectId.isValid(departmentId)) {
+      const departmentObjectId = new Types.ObjectId(departmentId);
+      referenceIds.set(departmentObjectId.toString(), departmentObjectId);
+    }
+    for (const complexDeptId of complexDeptIds) {
+      referenceIds.set(complexDeptId.toString(), complexDeptId);
+    }
+
+    if (referenceIds.size === 0) {
       return [];
     }
 
     const linkedClinics = await this.clinicModel
       .find({
-        complexDepartmentId: { $in: complexDeptIds },
-        status: { $ne: 'deleted' },
+        complexDepartmentId: { $in: Array.from(referenceIds.values()) },
+        deletedAt: null,
       })
       .populate('complexId', 'name')
       .select('_id name complexId')
@@ -595,7 +605,10 @@ export class DepartmentService {
       const complexDeptIds = await this.getComplexDepartmentIds(departmentId);
 
       // Step 3: Check clinic linkage
-      const linkedClinics = await this.getLinkedClinics(complexDeptIds);
+      const linkedClinics = await this.getLinkedClinics(
+        departmentId,
+        complexDeptIds,
+      );
 
       if (linkedClinics.length > 0) {
         const formattedClinics = this.formatLinkedClinics(linkedClinics);
@@ -698,7 +711,10 @@ export class DepartmentService {
       const complexDeptIds = await this.getComplexDepartmentIds(departmentId);
 
       // Step 3: Get linked clinics
-      const linkedClinics = await this.getLinkedClinics(complexDeptIds);
+      const linkedClinics = await this.getLinkedClinics(
+        departmentId,
+        complexDeptIds,
+      );
 
       // Step 4: Get linked services count
       const linkedServices = await this.getLinkedServicesCount(complexDeptIds);
@@ -759,7 +775,10 @@ export class DepartmentService {
       const complexDeptIds = await this.getComplexDepartmentIds(departmentId);
 
       // Step 3: Get linked clinics
-      const linkedClinics = await this.getLinkedClinics(complexDeptIds);
+      const linkedClinics = await this.getLinkedClinics(
+        departmentId,
+        complexDeptIds,
+      );
 
       // Step 4: Format linked clinics
       const formattedClinics = this.formatLinkedClinics(linkedClinics);
@@ -861,7 +880,10 @@ export class DepartmentService {
         await this.getComplexDepartmentIds(departmentId);
 
       // Step 4: Get all clinics linked to source department
-      const clinicsToTransfer = await this.getLinkedClinics(sourceComplexDeptIds);
+      const clinicsToTransfer = await this.getLinkedClinics(
+        departmentId,
+        sourceComplexDeptIds,
+      );
 
       let clinicsTransferred = 0;
 
@@ -986,7 +1008,10 @@ export class DepartmentService {
       // If deactivating, check for linked clinics
       if (status === 'inactive') {
         const complexDeptIds = await this.getComplexDepartmentIds(departmentId);
-        const linkedClinics = await this.getLinkedClinics(complexDeptIds);
+    const linkedClinics = await this.getLinkedClinics(
+      departmentId,
+      complexDeptIds,
+    );
 
         if (linkedClinics.length > 0) {
           const formattedClinics = this.formatLinkedClinics(linkedClinics);

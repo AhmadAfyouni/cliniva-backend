@@ -12,6 +12,12 @@ describe('ClinicService', () => {
   let service: ClinicService;
   let clinicModel: jest.Mocked<Model<any>>;
   let complexModel: jest.Mocked<Model<any>>;
+  let userModel: jest.Mocked<Model<any>>;
+  let appointmentModel: jest.Mocked<Model<any>>;
+  let workingHoursModel: jest.Mocked<Model<any>>;
+  let userAccessModel: jest.Mocked<Model<any>>;
+  let complexDepartmentModel: jest.Mocked<Model<any>>;
+  let departmentModel: jest.Mocked<Model<any>>;
   let subscriptionService: jest.Mocked<SubscriptionService>;
 
   // Mock models factory
@@ -27,6 +33,8 @@ describe('ClinicService', () => {
     select: jest.fn().mockReturnThis(),
     populate: jest.fn().mockReturnThis(),
     sort: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
     lean: jest.fn().mockReturnThis(),
     exec: jest.fn(),
     save: jest.fn(),
@@ -36,6 +44,12 @@ describe('ClinicService', () => {
     // Create mock models
     clinicModel = createMockModel() as any;
     complexModel = createMockModel() as any;
+    userModel = createMockModel() as any;
+    appointmentModel = createMockModel() as any;
+    workingHoursModel = createMockModel() as any;
+    userAccessModel = createMockModel() as any;
+    complexDepartmentModel = createMockModel() as any;
+    departmentModel = createMockModel() as any;
 
     // Create mock subscription service
     subscriptionService = {
@@ -56,6 +70,30 @@ describe('ClinicService', () => {
           useValue: complexModel,
         },
         {
+          provide: getModelToken('User'),
+          useValue: userModel,
+        },
+        {
+          provide: getModelToken('Appointment'),
+          useValue: appointmentModel,
+        },
+        {
+          provide: getModelToken('WorkingHours'),
+          useValue: workingHoursModel,
+        },
+        {
+          provide: getModelToken('UserAccess'),
+          useValue: userAccessModel,
+        },
+        {
+          provide: getModelToken('ComplexDepartment'),
+          useValue: complexDepartmentModel,
+        },
+        {
+          provide: getModelToken('Department'),
+          useValue: departmentModel,
+        },
+        {
           provide: SubscriptionService,
           useValue: subscriptionService,
         },
@@ -67,6 +105,106 @@ describe('ClinicService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  // ============================================================================
+  // getClinics Tests
+  // ============================================================================
+  describe('getClinics', () => {
+    it('should keep admins at subscription scope instead of forcing their token complex', async () => {
+      const adminUser = {
+        id: '69de0fce51ed8564f61f1427',
+        role: 'admin',
+        subscriptionId: '69de071c51ed8564f61f0f37',
+        complexId: '69de0cd751ed8564f61f1165',
+      };
+
+      const findChain = {
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      };
+
+      clinicModel.find.mockReturnValue(findChain as any);
+      clinicModel.countDocuments.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(0),
+      } as any);
+      userAccessModel.find.mockReturnValue({
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      } as any);
+
+      await service.getClinics(
+        {
+          sortBy: 'createdAt',
+          sortOrder: 'desc',
+        },
+        adminUser,
+      );
+
+      expect(clinicModel.find).toHaveBeenCalledWith({
+        subscriptionId: {
+          $in: [
+            new Types.ObjectId(adminUser.subscriptionId),
+            adminUser.subscriptionId,
+          ],
+        },
+        deletedAt: { $exists: false },
+      });
+      expect(clinicModel.countDocuments).toHaveBeenCalledWith({
+        subscriptionId: {
+          $in: [
+            new Types.ObjectId(adminUser.subscriptionId),
+            adminUser.subscriptionId,
+          ],
+        },
+        deletedAt: { $exists: false },
+      });
+      expect(userAccessModel.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateClinic', () => {
+    it('should normalize raw department ids into complex-department junction ids', async () => {
+      const clinicId = new Types.ObjectId().toString();
+      const complexId = new Types.ObjectId().toString();
+      const departmentId = new Types.ObjectId().toString();
+      const complexDepartmentId = new Types.ObjectId();
+      const savedClinic = {
+        _id: clinicId,
+        complexId: new Types.ObjectId(complexId),
+        save: jest.fn().mockResolvedValue(true),
+      };
+
+      clinicModel.findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(savedClinic),
+      } as any);
+      complexDepartmentModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue({ _id: complexDepartmentId }),
+      } as any);
+
+      await service.updateClinic(clinicId, {
+        complexDepartmentId: departmentId,
+      } as any);
+
+      expect(complexDepartmentModel.findOne).toHaveBeenCalledWith({
+        isActive: true,
+        $or: [
+          { _id: new Types.ObjectId(departmentId) },
+          {
+            complexId: new Types.ObjectId(complexId),
+            departmentId: new Types.ObjectId(departmentId),
+          },
+        ],
+      });
+      expect(savedClinic.complexDepartmentId).toEqual(complexDepartmentId);
+      expect(savedClinic.save).toHaveBeenCalled();
+    });
   });
 
   // ============================================================================
@@ -283,7 +421,11 @@ describe('ClinicService', () => {
       const result = await service.getClinicsForDropdown();
 
       // Verify query filters for active clinics only
-      expect(clinicModel.find).toHaveBeenCalledWith({ isActive: true });
+      expect(clinicModel.find).toHaveBeenCalledWith({
+        isActive: true,
+        status: 'active',
+        deletedAt: { $exists: false },
+      });
 
       // Verify response
       expect(ResponseBuilder.success).toHaveBeenCalledWith(mockActiveClinics);
@@ -307,6 +449,8 @@ describe('ClinicService', () => {
       // Verify query includes complexId filter
       expect(clinicModel.find).toHaveBeenCalledWith({
         isActive: true,
+        status: 'active',
+        deletedAt: { $exists: false },
         complexId: new Types.ObjectId(complexId),
       });
     });
@@ -375,7 +519,11 @@ describe('ClinicService', () => {
       await service.getClinicsForDropdown();
 
       // Verify the query explicitly filters for active clinics
-      expect(clinicModel.find).toHaveBeenCalledWith({ isActive: true });
+      expect(clinicModel.find).toHaveBeenCalledWith({
+        isActive: true,
+        status: 'active',
+        deletedAt: { $exists: false },
+      });
     });
   });
 

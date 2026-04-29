@@ -45,6 +45,18 @@ export class ComplexService {
     return { $in: [new Types.ObjectId(subscriptionId), subscriptionId] };
   }
 
+  private buildImplicitOrganizationVisibilityFilter(organizationId?: string): any[] {
+    if (!organizationId || !Types.ObjectId.isValid(organizationId)) {
+      return [];
+    }
+
+    return [
+      { organizationId: new Types.ObjectId(organizationId) },
+      { organizationId: null },
+      { organizationId: { $exists: false } },
+    ];
+  }
+
   /**
    * List complexes with pagination, filters, and optional counts
    *
@@ -71,9 +83,6 @@ export class ComplexService {
 
       if (requestingUser.subscriptionId) {
         targetSubscriptionId = requestingUser.subscriptionId;
-      }
-      if (requestingUser.organizationId) {
-        targetOrganizationId = requestingUser.organizationId;
       }
 
       // Assignment scoping for non-admin roles
@@ -128,6 +137,14 @@ export class ComplexService {
     // Filter by organizationId
     if (targetOrganizationId) {
       filter.organizationId = new Types.ObjectId(targetOrganizationId);
+    } else if (requestingUser?.role !== 'super_admin') {
+      const implicitOrganizationFilter =
+        this.buildImplicitOrganizationVisibilityFilter(
+          requestingUser?.organizationId,
+        );
+      if (implicitOrganizationFilter.length > 0) {
+        filter.$or = implicitOrganizationFilter;
+      }
     }
 
     // Filter by subscriptionId
@@ -766,8 +783,12 @@ export class ComplexService {
         );
       }
 
-      if (requestingUser.organizationId) {
-        filter.organizationId = new Types.ObjectId(requestingUser.organizationId);
+      const implicitOrganizationFilter =
+        this.buildImplicitOrganizationVisibilityFilter(
+          requestingUser.organizationId,
+        );
+      if (implicitOrganizationFilter.length > 0) {
+        filter.$or = implicitOrganizationFilter;
       }
     }
 
@@ -1759,13 +1780,13 @@ export class ComplexService {
       })
       .toArray();
 
-    // For each complex_department, check if there are active clinics linked to it
+    // For each complex_department, check if there are clinics linked to it
     for (const complexDept of complexDepartments) {
       const linkedClinics = await this.complexModel.db
         .collection('clinics')
         .find({
           complexDepartmentId: complexDept._id,
-          isActive: true,
+          deletedAt: null,
         })
         .toArray();
 

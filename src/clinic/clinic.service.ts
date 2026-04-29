@@ -54,6 +54,55 @@ export class ClinicService {
     return { $in: [new Types.ObjectId(subscriptionId), subscriptionId] };
   }
 
+  private hasSubscriptionWideClinicAccess(requestingUser?: any): boolean {
+    const role = String(requestingUser?.role || '').toLowerCase();
+    return role === 'owner' || role === 'admin';
+  }
+
+  private async normalizeComplexDepartmentId(
+    complexDepartmentId?: string | Types.ObjectId | null,
+    complexId?: string | Types.ObjectId | null,
+  ): Promise<Types.ObjectId | null> {
+    if (!complexDepartmentId) {
+      return null;
+    }
+
+    const normalizedComplexDepartmentId =
+      complexDepartmentId?.toString?.() ?? complexDepartmentId;
+    if (!Types.ObjectId.isValid(normalizedComplexDepartmentId)) {
+      throw new BadRequestException('Invalid complex department ID format');
+    }
+
+    const normalizedComplexId = complexId?.toString?.() ?? complexId;
+    const requestedId = new Types.ObjectId(normalizedComplexDepartmentId);
+
+    const junctionQuery: any = {
+      isActive: true,
+      $or: [{ _id: requestedId }],
+    };
+
+    if (normalizedComplexId && Types.ObjectId.isValid(normalizedComplexId)) {
+      junctionQuery.$or.push({
+        complexId: new Types.ObjectId(normalizedComplexId),
+        departmentId: requestedId,
+      });
+    }
+
+    const junctionRecord = await this.complexDepartmentModel
+      .findOne(junctionQuery)
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (!junctionRecord) {
+      throw new BadRequestException(
+        'Department is not assigned to the selected complex',
+      );
+    }
+
+    return junctionRecord._id as Types.ObjectId;
+  }
+
   async findClinicBySubscription(
     subscriptionId: string,
   ): Promise<Clinic | null> {
@@ -129,8 +178,8 @@ export class ClinicService {
       }
 
       // 2. Resolve role-based scope restrictions
-      if (requestingUser.role === 'owner') {
-        // Owners have subscription-level access — no further restrictions
+      if (this.hasSubscriptionWideClinicAccess(requestingUser)) {
+        // Owners and admins have subscription-level clinic access unless explicitly filtered
       } else {
         // Higher-order scope resolution: Complex > Clinic
         if (requestingUser.complexId) {
@@ -145,7 +194,7 @@ export class ClinicService {
 
       // Try to resolve permitted clinics from UserAccess records
       // ... (rest of UserAccess logic remains same)
-      const userId = requestingUser.role !== 'owner'
+      const userId = !this.hasSubscriptionWideClinicAccess(requestingUser)
         ? (requestingUser.userId || requestingUser.id)
         : null;
       if (userId) {
@@ -593,11 +642,15 @@ export class ClinicService {
       }
     }
 
+    const normalizedComplexDepartmentId =
+      await this.normalizeComplexDepartmentId(
+        createClinicDto.complexDepartmentId,
+        createClinicDto.complexId,
+      );
+
     const clinicData = {
       ...createClinicDto,
-      complexDepartmentId: createClinicDto.complexDepartmentId
-        ? new Types.ObjectId(createClinicDto.complexDepartmentId)
-        : null,
+      complexDepartmentId: normalizedComplexDepartmentId,
       complexId: createClinicDto.complexId
         ? new Types.ObjectId(createClinicDto.complexId)
         : null,
@@ -887,11 +940,27 @@ export class ClinicService {
     let department: { _id: string; name: string; description?: string } | null = null;
     if (clinic.complexDepartmentId) {
       try {
-        const junctionRecord = await this.complexDepartmentModel
+        let junctionRecord = await this.complexDepartmentModel
           .findById(clinic.complexDepartmentId)
           .populate<{ departmentId: Department }>('departmentId', 'name description')
           .lean()
           .exec();
+
+        if (!junctionRecord && clinic.complexId) {
+          junctionRecord = await this.complexDepartmentModel
+            .findOne({
+              complexId: clinic.complexId,
+              departmentId: clinic.complexDepartmentId,
+              isActive: true,
+            })
+            .populate<{ departmentId: Department }>(
+              'departmentId',
+              'name description',
+            )
+            .lean()
+            .exec();
+        }
+
         if (junctionRecord?.departmentId) {
           const dep = junctionRecord.departmentId as any;
           department = {
@@ -899,6 +968,20 @@ export class ClinicService {
             name: dep.name,
             description: dep.description,
           };
+        } else {
+          const fallbackDepartment = await this.departmentModel
+            .findById(clinic.complexDepartmentId)
+            .select('_id name description')
+            .lean()
+            .exec();
+
+          if (fallbackDepartment) {
+            department = {
+              _id: fallbackDepartment._id.toString(),
+              name: fallbackDepartment.name,
+              description: fallbackDepartment.description,
+            };
+          }
         }
       } catch {
         // non-blocking — department will be null
@@ -1005,7 +1088,10 @@ export class ClinicService {
 
     // TENANT ISOLATION: scope to requesting user's subscription/clinic
     if (requestingUser && requestingUser.role !== 'super_admin') {
-      if (requestingUser.role === 'owner' && requestingUser.subscriptionId) {
+      if (
+        this.hasSubscriptionWideClinicAccess(requestingUser) &&
+        requestingUser.subscriptionId
+      ) {
         query.subscriptionId = this.buildSubscriptionMatch(
           requestingUser.subscriptionId.toString(),
         );
@@ -1050,6 +1136,8 @@ export class ClinicService {
     updateClinicDto: UpdateClinicDto,
   ): Promise<Clinic> {
     const clinic = await this.getClinic(clinicId);
+    const targetComplexId =
+      clinic.complexId?.toString?.() ?? clinic.complexId;
 
     // Validate business profile data if provided
     if (this.hasBusinessProfileData(updateClinicDto)) {
@@ -1096,6 +1184,14 @@ export class ClinicService {
     const safeUpdates = Object.fromEntries(
       Object.entries(updateClinicDto).filter(([, v]) => v !== undefined),
     );
+
+    if (safeUpdates.complexDepartmentId !== undefined) {
+      safeUpdates.complexDepartmentId = await this.normalizeComplexDepartmentId(
+        safeUpdates.complexDepartmentId as string,
+        targetComplexId,
+      );
+    }
+
     Object.assign(clinic, safeUpdates);
     return await clinic.save();
   }

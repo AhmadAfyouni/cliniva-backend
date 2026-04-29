@@ -21,6 +21,7 @@ import { DepartmentService } from '../department/department.service';
 import {
   AssignedClinicSummary,
   CapacityBreakdown,
+  ComplexStatusChangeValidationResponse,
   DoctorStaffSummary,
   DepartmentRestriction,
   PaginatedResponse,
@@ -2072,6 +2073,150 @@ export class ComplexService {
     } finally {
       await TransactionUtil.endSession(session);
     }
+  }
+
+  async validateStatusChange(
+    complexId: string,
+    status: 'active' | 'inactive' | 'suspended',
+    requestingUser?: any,
+  ): Promise<ComplexStatusChangeValidationResponse> {
+    const complex = await this.complexModel.findById(complexId).lean().exec();
+
+    if (!complex) {
+      throw new NotFoundException({
+        code: 'COMPLEX_006',
+        message: ERROR_CODES.COMPLEX_006.message,
+      });
+    }
+
+    await this.verifyComplexOwnership(complex, requestingUser);
+
+    if (status === 'active') {
+      return {
+        success: true,
+        data: {
+          hasActiveClinics: false,
+          activeClinicsCount: 0,
+          hasActiveServices: false,
+          activeServicesCount: 0,
+          requiresTransfer: false,
+          availableTargetComplexes: [],
+          warnings: [],
+        },
+        message: {
+          ar: 'تم التحقق من تغيير الحالة بنجاح',
+          en: 'Status change validation completed successfully',
+        },
+      };
+    }
+
+    const complexObjectId = new Types.ObjectId(complexId);
+    const activeClinics = await this.complexModel.db
+      .collection('clinics')
+      .find(
+        {
+          complexId: complexObjectId,
+          isActive: true,
+          deletedAt: null,
+        },
+        { projection: { _id: 1 } },
+      )
+      .toArray();
+
+    const clinicIds = activeClinics.map((clinic) => clinic._id);
+    const serviceOrFilters: any[] = [{ complexId: complexObjectId }];
+    if (clinicIds.length > 0) {
+      serviceOrFilters.push({ clinicId: { $in: clinicIds } });
+    }
+
+    const targetComplexFilter: any = {
+      _id: { $ne: complexObjectId },
+      status: 'active',
+      deletedAt: null,
+    };
+
+    const targetSubscriptionId =
+      complex.subscriptionId?.toString?.() ?? complex.subscriptionId?.toString();
+    if (targetSubscriptionId) {
+      targetComplexFilter.subscriptionId =
+        this.buildSubscriptionMatch(targetSubscriptionId);
+    }
+
+    const [activeServicesCount, activeAppointmentsCount, availableTargetComplexes] =
+      await Promise.all([
+        this.complexModel.db.collection('services').countDocuments({
+          isActive: true,
+          deletedAt: null,
+          $or: serviceOrFilters,
+        }),
+        clinicIds.length > 0
+          ? this.complexModel.db.collection('appointments').countDocuments({
+              clinicId: { $in: clinicIds },
+              status: { $in: ['scheduled', 'confirmed'] },
+              deletedAt: null,
+            })
+          : Promise.resolve(0),
+        this.complexModel
+          .find(targetComplexFilter)
+          .select('_id name')
+          .lean()
+          .exec(),
+      ]);
+
+    const warnings: ComplexStatusChangeValidationResponse['data']['warnings'] =
+      [];
+
+    if (activeClinics.length > 0) {
+      warnings.push({
+        type: 'clinics',
+        message: {
+          ar: `هذا المجمع يحتوي على ${activeClinics.length} عيادات نشطة ويجب نقلها قبل إلغاء التفعيل.`,
+          en: `This complex has ${activeClinics.length} active clinics that must be transferred before deactivation.`,
+        },
+      });
+    }
+
+    if (activeServicesCount > 0) {
+      warnings.push({
+        type: 'services',
+        message: {
+          ar: `سيتم إلغاء تنشيط ${activeServicesCount} خدمة تلقائيا.`,
+          en: `${activeServicesCount} services will be automatically deactivated.`,
+        },
+      });
+    }
+
+    if (activeAppointmentsCount > 0) {
+      warnings.push({
+        type: 'appointments',
+        message: {
+          ar: `هناك ${activeAppointmentsCount} مواعيد مجدولة أو مؤكدة ستحتاج إلى إعادة جدولة.`,
+          en: `There are ${activeAppointmentsCount} scheduled or confirmed appointments that will need rescheduling.`,
+        },
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        hasActiveClinics: activeClinics.length > 0,
+        activeClinicsCount: activeClinics.length,
+        hasActiveServices: activeServicesCount > 0,
+        activeServicesCount,
+        requiresTransfer: activeClinics.length > 0,
+        availableTargetComplexes: availableTargetComplexes.map(
+          (targetComplex: any) => ({
+            id: targetComplex._id.toString(),
+            name: targetComplex.name,
+          }),
+        ),
+        warnings,
+      },
+      message: {
+        ar: 'تم التحقق من تغيير الحالة بنجاح',
+        en: 'Status change validation completed successfully',
+      },
+    };
   }
 
   // ======== STATUS MANAGEMENT HELPER METHODS ========

@@ -251,6 +251,27 @@ export interface StatusChangeResponse extends BaseSuccessResponse {
   };
 }
 
+export interface ComplexStatusChangeValidation {
+  hasActiveClinics: boolean;
+  activeClinicsCount: number;
+  hasActiveServices: boolean;
+  activeServicesCount: number;
+  requiresTransfer: boolean;
+  availableTargetComplexes: Array<{
+    id: string;
+    name: string;
+  }>;
+  warnings: Array<{
+    type: 'clinics' | 'services' | 'appointments' | 'staff';
+    message: BilingualMessage;
+  }>;
+}
+
+export interface ComplexStatusChangeValidationResponse
+  extends BaseSuccessResponse {
+  data: ComplexStatusChangeValidation;
+}
+
 /**
  * Capacity Response
  * Response for capacity calculation endpoint

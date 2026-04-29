@@ -668,6 +668,57 @@ export class ComplexController {
   }
 
   /**
+   * Validate complex status change before updating
+   * GET /complexes/:id/validate-status-change
+   */
+  @Get(':id/validate-status-change')
+  @ApiOperation({
+    summary: 'Validate complex status change',
+    description:
+      'Returns the warnings and transfer requirements needed before changing a complex status.',
+  })
+  @ApiParam({
+    name: 'id',
+    type: String,
+    description: 'Complex ID (MongoDB ObjectId)',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: true,
+    enum: ['active', 'inactive', 'suspended'],
+    description: 'Requested target status',
+    example: 'inactive',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Status change validation completed successfully',
+  })
+  async validateComplexStatusChange(
+    @Param('id') id: string,
+    @Query('status') status: string,
+    @Request() req: any,
+  ) {
+    const normalizedStatus = String(status || '').toLowerCase();
+
+    if (!['active', 'inactive', 'suspended'].includes(normalizedStatus)) {
+      throw new BadRequestException({
+        code: 'COMPLEX_999',
+        message: {
+          ar: 'قيمة الحالة المطلوبة غير صالحة',
+          en: 'Invalid requested status value',
+        },
+      });
+    }
+
+    return await this.complexService.validateStatusChange(
+      id,
+      normalizedStatus as 'active' | 'inactive' | 'suspended',
+      req.user,
+    );
+  }
+
+  /**
    * Get complex details with all relationships and calculated metrics
    * GET /complexes/:id
    *

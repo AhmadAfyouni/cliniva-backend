@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ClinicService } from './clinic.service';
@@ -209,6 +209,48 @@ describe('ClinicService', () => {
     });
   });
 
+  describe('deleteClinic', () => {
+    it('should throw CLINIC_003 when clinic has active appointments', async () => {
+      const clinicId = new Types.ObjectId().toString();
+
+      clinicModel.findById.mockResolvedValue({
+        _id: clinicId,
+        deletedAt: null,
+      } as any);
+      appointmentModel.countDocuments.mockResolvedValue(1);
+
+      await expect(service.deleteClinic(clinicId)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(appointmentModel.countDocuments).toHaveBeenCalledWith({
+        clinicId: new Types.ObjectId(clinicId),
+        status: { $in: ['scheduled', 'confirmed'] },
+        appointmentDate: { $gte: expect.any(Date) },
+        isDeleted: { $ne: true },
+      });
+      expect(clinicModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('should soft delete clinic when it has no active appointments', async () => {
+      const clinicId = new Types.ObjectId().toString();
+
+      clinicModel.findById.mockResolvedValue({
+        _id: clinicId,
+        deletedAt: null,
+      } as any);
+      appointmentModel.countDocuments.mockResolvedValue(0);
+      clinicModel.findByIdAndUpdate.mockResolvedValue({} as any);
+
+      const result = await service.deleteClinic(clinicId);
+
+      expect(result.success).toBe(true);
+      expect(clinicModel.findByIdAndUpdate).toHaveBeenCalledWith(clinicId, {
+        deletedAt: expect.any(Date),
+      });
+    });
+  });
+
   // ============================================================================
   // getClinicsByComplex Tests
   // ============================================================================
@@ -263,6 +305,8 @@ describe('ClinicService', () => {
       // Verify query was built correctly
       expect(clinicModel.find).toHaveBeenCalledWith({
         complexId: new Types.ObjectId(complexId),
+        deletedAt: { $exists: false },
+        status: 'active',
       });
 
       // Verify response
@@ -320,6 +364,7 @@ describe('ClinicService', () => {
       // Verify query includes isActive filter
       expect(clinicModel.find).toHaveBeenCalledWith({
         complexId: new Types.ObjectId(complexId),
+        deletedAt: { $exists: false },
         isActive: true,
       });
     });

@@ -1516,6 +1516,20 @@ export class ClinicService {
         });
       }
 
+      const activeAppointments = await this.appointmentModel.countDocuments({
+        clinicId: new Types.ObjectId(id),
+        status: { $in: ['scheduled', 'confirmed'] },
+        appointmentDate: { $gte: new Date() },
+        isDeleted: { $ne: true },
+      });
+
+      if (activeAppointments > 0) {
+        throw new BadRequestException({
+          message: ERROR_CODES.CLINIC_003.message,
+          code: ERROR_CODES.CLINIC_003.code,
+        });
+      }
+
       // Perform soft delete
       await this.clinicModel.findByIdAndUpdate(id, {
         deletedAt: new Date(),

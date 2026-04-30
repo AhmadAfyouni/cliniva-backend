@@ -1445,7 +1445,7 @@ export class ComplexService {
       .collection('users')
       .find({
         complexId: new Types.ObjectId(complexId),
-        role: { $in: ['doctor', 'staff'] },
+        role: { $in: ['doctor', 'staff', 'admin'] },
       })
       .project({
         firstName: 1,
@@ -1569,7 +1569,7 @@ export class ComplexService {
         .collection('users')
         .countDocuments({
           clinicId: { $in: clinicIds },
-          role: { $nin: ['doctor', 'patient'] },
+          role: { $nin: ['doctor', 'patient', 'owner'] },
           isActive: true,
         });
 
@@ -1627,7 +1627,7 @@ export class ComplexService {
           .collection('users')
           .countDocuments({
             clinicId: clinic._id,
-            role: { $nin: ['doctor', 'patient'] },
+            role: { $nin: ['doctor', 'patient', 'owner'] },
             isActive: true,
           });
 

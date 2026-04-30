@@ -1598,78 +1598,84 @@ export class AuthService {
       if (!isAllowed) {
         throw new BadRequestException({
           message: {
-            ar: 'تم تجاوز الحد المسموح من المحاولات. يرجى المحاولة لاحقاً',
-            en: 'Rate limit exceeded. Please try again later',
+            ar: 'لقد أرسلت طلبات كثيرة. يرجى الانتظار ساعة قبل المحاولة مرة أخرى',
+            en: 'Too many attempts. Please wait an hour before trying again',
           },
           code: 'RATE_LIMIT_EXCEEDED',
         });
       }
-
+  
       // Find user by email
       const user = await this.userModel.findOne({
         email: email.toLowerCase(),
       });
-
-      // If user exists, generate and send reset token
+  
       if (user) {
         // Generate secure reset token (32 bytes random) - Requirement 7.9
         const resetToken = crypto.randomBytes(32).toString('hex');
-
+  
         // Hash token for storage
         const hashedToken = crypto
           .createHash('sha256')
           .update(resetToken)
           .digest('hex');
-
+  
         // Set passwordResetToken and passwordResetExpires (24h) on user - Requirement 2.5
         user.passwordResetToken = hashedToken;
-        user.passwordResetExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+        user.passwordResetExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
         user.passwordResetUsed = false;
         await user.save();
-
+  
         this.logger.log(`Password reset requested for user ${user.email}`);
-
+  
         await this.emailService.sendPasswordResetEmail(
           user.email,
           user.firstName,
           resetToken,
           user.preferredLanguage || 'en',
         );
-
-        // Call AuditService to log reset request
+  
         await this.auditService.logPasswordResetRequest(email, ipAddress);
+  
+        return {
+          success: true,
+          message: {
+            ar: 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني',
+            en: 'Password reset link has been sent to your email',
+          },
+        };
       } else {
-        // User doesn't exist, but we still log the attempt
         this.logger.log(
           `Password reset requested for non-existent email: ${email}`,
         );
         await this.auditService.logPasswordResetRequest(email, ipAddress);
+  
+        throw new NotFoundException({
+          message: {
+            ar: 'البريد الإلكتروني غير مسجل في النظام',
+            en: 'This email is not registered in our system',
+          },
+          code: 'EMAIL_NOT_FOUND',
+        });
       }
-
-      // Return success response (don't reveal if email exists) - Requirement 2.10
-      return {
-        success: true,
-        message: {
-          ar: 'إذا كان البريد الإلكتروني موجوداً في نظامنا، ستتلقى رسالة لإعادة تعيين كلمة المرور',
-          en: 'If the email exists in our system, you will receive a password reset email',
-        },
-      };
     } catch (error) {
-      if (error instanceof BadRequestException) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
         throw error;
       }
       this.logger.error(
         `Password reset request failed for ${email}: ${error.message}`,
         error.stack,
       );
-      // Return generic success message even on error to avoid revealing information
-      return {
-        success: true,
+      throw new BadRequestException({
         message: {
-          ar: 'إذا كان البريد الإلكتروني موجوداً في نظامنا، ستتلقى رسالة لإعادة تعيين كلمة المرور',
-          en: 'If the email exists in our system, you will receive a password reset email',
+          ar: 'فشل في معالجة الطلب',
+          en: 'Failed to process request',
         },
-      };
+        code: 'FORGOT_PASSWORD_FAILED',
+      });
     }
   }
 

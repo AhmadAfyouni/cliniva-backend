@@ -47,8 +47,8 @@ export const AUTH_ERROR_MESSAGES: Record<AuthErrorCode, BilingualMessage> = {
     en: 'New password must differ from current password',
   },
   [AuthErrorCode.RATE_LIMIT_EXCEEDED]: {
-    ar: 'تم تجاوز الحد المسموح من المحاولات',
-    en: 'Rate limit exceeded',
+    ar: 'لقد أرسلت طلبات كثيرة. يرجى الانتظار قبل المحاولة مرة أخرى',
+    en: 'Too many attempts. Please wait before trying again',
   },
   [AuthErrorCode.TOKEN_BLACKLISTED]: {
     ar: 'تم إنهاء جلستك لأن معلومات أساسية في حسابك تم تعديلها. يرجى تسجيل الدخول مرة أخرى باستخدام البيانات المحدثة.',

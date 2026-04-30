@@ -783,7 +783,7 @@ export class EmployeeService {
     let effectiveComplexId = complexId;
     let effectiveOrgId = organizationId;
 
-    if (requestingUser && requestingUser.role !== 'super_admin') {
+    if (requestingUser && !['super_admin', 'admin'].includes(requestingUser.role)) {
       // 1. Mandatory subscription-level tenant isolation
       if (requestingUser.subscriptionId) {
         effectiveOrgId = requestingUser.subscriptionId.toString();
@@ -1315,7 +1315,7 @@ export class EmployeeService {
     const employee = result[0];
 
     // IDOR protection: verify employee belongs to requesting user's tenant
-    if (requestingUser && requestingUser.role !== 'super_admin') {
+    if (requestingUser && !['super_admin', 'admin'].includes(requestingUser.role)) {
       const empSubId = employee.subscriptionId?.toString();
       const userSubId = requestingUser.subscriptionId?.toString();
       if (empSubId && userSubId && empSubId !== userSubId) {
@@ -1823,16 +1823,18 @@ export class EmployeeService {
 
     // TENANT SCOPING: scope stats to requesting user's subscription
     let scopedUserIds: Types.ObjectId[] | null = null;
-    if (requestingUser && requestingUser.role !== 'super_admin' && requestingUser.subscriptionId) {
+    if (requestingUser && !['super_admin', 'admin'].includes(requestingUser.role) && requestingUser.subscriptionId) {
       scopedUserIds = (await this.userModel.distinct('_id', {
         subscriptionId: new Types.ObjectId(requestingUser.subscriptionId.toString()),
       })) as Types.ObjectId[];
     }
     const userIdFilter: any = scopedUserIds ? { userId: { $in: scopedUserIds } } : {};
     const userSubMatch: any =
-      requestingUser && requestingUser.role !== 'super_admin' && requestingUser.subscriptionId
-        ? { subscriptionId: new Types.ObjectId(requestingUser.subscriptionId.toString()) }
-        : {};
+    requestingUser && 
+    !['super_admin', 'admin'].includes(requestingUser.role) && 
+    requestingUser.subscriptionId
+      ? { subscriptionId: new Types.ObjectId(requestingUser.subscriptionId.toString()) }
+      : {};
 
     const [
       totalEmployees,
